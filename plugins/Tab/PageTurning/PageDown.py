@@ -115,16 +115,46 @@ Page number calculation: 'Tab.page_no' is a 0-based index.
     def run(self) -> bool:
         """
         执行下一页操作。
-
-        若成功翻页，则返回 True，否则返回 False 。
         """
         current_tab = self.context.get_current_tab()
         if current_tab is None:
-            return
+            return False
 
-        # 单页视图
-        if current_tab.display_mode == "single":
-            self.page_down_single(current_tab)
+        # 检查是否已经是最后一页
+        if current_tab.page_no >= current_tab.total_pages - 1:
+            print("已经是最后一页")
+            return False
+
+        # 计算下一页在画布上的位置
+        try:
+            # selectable_page_positions 是由 ViewPlugin 注入的
+            # 它返回一个列表：[(page, page_rect_on_canvas), ...]
+            all_page_rects = current_tab.selectable_page_positions
+            
+            # 获取下一页的矩形
+            next_page_index = current_tab.page_no + 1
+            if 0 <= next_page_index < len(all_page_rects):
+                _, next_page_rect = all_page_rects[next_page_index]
+                
+                # 【关键】将滚动位置设置为下一页的左上角
+                # 这会自动触发 update_view_region 和 render
+                current_tab.scroll_pos = (next_page_rect.x0, next_page_rect.y0)
+                
+                # 手动更新内部页码状态和UI
+                current_tab.state["page_no"] = next_page_index
+                self.context.update_page_number()
+                self.context.update_page_turning_button()
+                return True
+            else:
+                # 如果找不到下一页的矩形，则回退到旧逻辑
+                current_tab.page_no += 1
+                return True
+
+        except AttributeError:
+            # 如果 selectable_page_positions 不存在（例如 ViewPlugin 未加载）
+            # 则执行原始的翻页逻辑
+            current_tab.page_no += 1
+            return True
 
 
     def page_down_single(self, tab) -> bool:

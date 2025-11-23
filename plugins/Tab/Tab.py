@@ -95,16 +95,31 @@ class Tab:
     def display_mode(self) -> str:
         """
         显示模式。
+        【修复】始终返回字符串值，以供外部逻辑（如 .split()）使用。
         """
         return self.state["display_mode"]
 
     @display_mode.setter
-    def display_mode(self, mode: str) -> None:
-        if mode not in FileState.DISPLAY_MODES:
-            raise ValueError(f"Invalid display mode: {mode}. Must in {FileState.DISPLAY_MODES}")
-        self.state["display_mode"] = mode
-        self.update_view_region()
-        self.render()
+    def display_mode(self, mode: str | object) -> None:
+        """
+        【修复】接受字符串或枚举，但始终在 state 中存储字符串值。
+        """
+        from plugins.Tab.FileState import DisplayMode
+
+        valid_modes_values = [m.value for m in DisplayMode]
+        
+        value_to_set = ""
+        if isinstance(mode, str) and mode in valid_modes_values:
+            value_to_set = mode
+        elif isinstance(mode, DisplayMode) and mode.value in valid_modes_values:
+            value_to_set = mode.value
+        else:
+            raise ValueError(f"Invalid display mode: {mode}. Must be one of {valid_modes_values}")
+
+        if self.state["display_mode"] != value_to_set:
+            self.state["display_mode"] = value_to_set
+            self.update_view_region()
+            self.render()
 
 
     @property
@@ -424,30 +439,31 @@ class Tab:
     def create_widgets(self):
         """
         创建标签页内的显示组件（画布、滚动条等）。
+        【注意】恢复到原始版本，滚动逻辑将由 ViewPlugin 注入。
         """
         # 显示区域（带滚动条）
         self.display_frame = ttk.Frame(self.frame)
 
         # 滚动条
-        self.v_scroll = ttk.Scrollbar(self.display_frame, orient = tk.VERTICAL)
-        self.v_scroll.pack(side = tk.RIGHT, fill = tk.Y)
+        self.v_scroll = ttk.Scrollbar(self.display_frame, orient=tk.VERTICAL)
+        self.v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.h_scroll = ttk.Scrollbar(self.display_frame, orient = tk.HORIZONTAL)
-        self.h_scroll.pack(side = tk.BOTTOM, fill = tk.X)
+        self.h_scroll = ttk.Scrollbar(self.display_frame, orient=tk.HORIZONTAL)
+        self.h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
 
-        # 画布
+        # 画布 (使用原始的、轻量级的回调绑定)
         self.canvas = tk.Canvas(
             self.display_frame,
-            xscrollcommand = self.auto_render(self.auto_update_view_attributes(self.h_scroll.set)),
-            yscrollcommand = self.auto_render(self.auto_update_view_attributes(self.v_scroll.set)),
-            bg = "white",
-            highlightthickness = 0,
+            xscrollcommand=self.auto_render(self.auto_update_view_attributes(self.h_scroll.set)),
+            yscrollcommand=self.auto_render(self.auto_update_view_attributes(self.v_scroll.set)),
+            bg="white",
+            highlightthickness=0,
         )
-        self.canvas.pack(side = tk.LEFT, fill = tk.BOTH, expand = True)
-        self.display_frame.pack(fill = tk.BOTH, expand = True, padx = 5, pady = 5)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.display_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        self.v_scroll.config(command = self.canvas.yview)
-        self.h_scroll.config(command = self.canvas.xview)
+        self.v_scroll.config(command=self.canvas.yview)
+        self.h_scroll.config(command=self.canvas.xview)
 
 
     def open(self) -> bool:
