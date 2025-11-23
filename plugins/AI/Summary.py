@@ -12,7 +12,28 @@ try:
 except ImportError:
     OpenAI = None
 
+try:
+    import tiktoken
+except ImportError:
+    tiktoken = None
+
 from glueous_plugin import Plugin
+
+
+def count_tokens(text: str) -> int:
+    """
+    计算文本的 token 数量。
+    """
+    if tiktoken is None:
+        # 如果无法导入 tiktoken，使用字符数估算（中文约1.5字符=1token，英文约4字符=1token）
+        # 这里使用保守估计：3字符=1token
+        return len(text) // 3
+    try:
+        encoding = tiktoken.get_encoding("cl100k_base")
+        return len(encoding.encode(text))
+    except Exception:
+        # 如果无法计算，返回字符数作为估计
+        return len(text) // 3
 
 
 class SummaryResultDialog(tk.Toplevel):
@@ -278,32 +299,52 @@ The summary length configuration is saved in ReaderAccess.data.
         获取需要总结的文本
 
         Returns:
-            str: 选中文本或整个文档的文本
+            str: 选中文本或当前页面的文本（限制范围以避免token过多）
         """
         # 尝试获取选中文本
         try:
             selected_text = self.context.get_selected_text()
             if selected_text and selected_text.strip():
-                return selected_text.strip()
+                text = selected_text.strip()
+                print(f"[调试] 使用选中文本，长度: {len(text)} 字符, token数: {count_tokens(text)}")
+                return text
         except Exception as e:
             print(f"获取选中文本失败: {e}")
 
-        # 如果没有选中文本，获取整个文档的文本
+        # 如果没有选中文本，只获取当前页面的文本（而不是整个文档）
         current_tab = self.context.get_current_tab()
         if current_tab is None or current_tab.doc is None:
             return ""
 
-        # 遍历所有页面获取文本
-        all_text = []
-        for page in current_tab.doc:
-            try:
-                page_text = page.get_text()
-                if page_text:
-                    all_text.append(page_text)
-            except Exception as e:
-                print(f"获取第 {page.number + 1} 页文本失败: {e}")
+        # 只获取当前页面的文本
+        try:
+            if hasattr(current_tab, 'page') and current_tab.page is not None:
+                page_text = current_tab.page.get_text()
+                if page_text and page_text.strip():
+                    text = page_text.strip()
+                    print(f"[调试] 使用当前页文本，长度: {len(text)} 字符, token数: {count_tokens(text)}")
+                    return text
+        except Exception as e:
+            print(f"获取当前页文本失败: {e}")
 
-        return "\n\n".join(all_text)
+        # 如果当前页也没有文本，尝试获取前3页（作为备选方案）
+        all_text = []
+        max_pages = min(3, len(current_tab.doc))  # 最多提取3页
+        for i in range(max_pages):
+            try:
+                page = current_tab.doc[i]
+                page_text = page.get_text()
+                if page_text and page_text.strip():
+                    all_text.append(page_text.strip())
+            except Exception as e:
+                print(f"获取第 {i + 1} 页文本失败: {e}")
+
+        if all_text:
+            text = "\n\n".join(all_text)
+            print(f"[调试] 使用前{len(all_text)}页文本，长度: {len(text)} 字符, token数: {count_tokens(text)}")
+            return text
+
+        return ""
 
     def call_ai_api(self, text: str, length: str) -> str:
         """
@@ -322,9 +363,103 @@ The summary length configuration is saved in ReaderAccess.data.
         if not config.get("url") or not config.get("api_key") or not config.get("model"):
             raise ValueError("AI 配置不完整，请先在'工具 → AI配置'中配置")
 
+        # 检查文本是否为空
+        if not text or not text.strip():
+            raise ValueError("要总结的文本为空，请先选择文本或打开包含文本的文档")
+
         # 构建提示词
         prompt = self.LENGTH_PROMPTS.get(length, self.LENGTH_PROMPTS["medium"])
-        full_prompt = f"{prompt}\n\n{text}"
+        
+        # 计算token数并检查限制
+        # API限制通常是整个请求的token数，包括prompt和文本
+        # 根据错误信息，最大是129024，但为了安全，我们留一些余量
+        MAX_INPUT_TOKENS = 129000  # 留24个token的余量
+        MIN_INPUT_TOKENS = 1
+        
+        prompt_tokens = count_tokens(prompt)
+        text_tokens = count_tokens(text)
+        total_tokens = prompt_tokens + text_tokens
+        
+        print(f"[调试] Prompt tokens: {prompt_tokens}, 文本 tokens: {text_tokens}, 总计: {total_tokens}")
+        print(f"[调试] 文本长度: {len(text)} 字符")
+        
+        # 检查token数是否在有效范围内
+        if total_tokens < MIN_INPUT_TOKENS:
+            raise ValueError(f"输入文本过短（{text_tokens} tokens），无法生成总结。请选择更多文本。")
+        
+        # 初始化要使用的文本
+        text_to_use = text
+        
+        # 检查是否超过限制
+        if total_tokens > MAX_INPUT_TOKENS:
+            print(f"[调试] 文本超过限制，开始截断...")
+            # 需要截断文本
+            available_tokens = MAX_INPUT_TOKENS - prompt_tokens - 100  # 再留100个token的余量
+            if available_tokens < MIN_INPUT_TOKENS:
+                raise ValueError(f"提示词过长（{prompt_tokens} tokens），无法添加文本内容。请选择更短的文本。")
+            
+            print(f"[调试] 可用 tokens: {available_tokens}")
+            
+            # 截断文本：使用二分查找找到合适的截断位置
+            if text_tokens > available_tokens:
+                # 先尝试截断到估算的长度
+                # 计算字符/token比例
+                chars_per_token = len(text) / text_tokens if text_tokens > 0 else 3
+                estimated_chars = int(available_tokens * chars_per_token * 0.9)  # 留10%余量
+                
+                print(f"[调试] 估算字符/token比例: {chars_per_token:.2f}, 估算截断长度: {estimated_chars} 字符")
+                
+                if estimated_chars < len(text):
+                    # 使用二分查找找到合适的截断位置
+                    left, right = 0, min(estimated_chars * 2, len(text))  # 搜索范围
+                    best_text = text[:left]
+                    
+                    # 二分查找
+                    while left < right:
+                        mid = (left + right) // 2
+                        test_text = text[:mid]
+                        test_tokens = count_tokens(test_text)
+                        
+                        if test_tokens <= available_tokens:
+                            best_text = test_text
+                            left = mid + 1
+                        else:
+                            right = mid
+                    
+                    text_to_use = best_text
+                    final_text_tokens = count_tokens(text_to_use)
+                    print(f"[调试] 截断完成。原始: {text_tokens} tokens ({len(text)} 字符), 截断后: {final_text_tokens} tokens ({len(text_to_use)} 字符)")
+                    
+                    # 如果截断后还是超过限制，使用更激进的方法
+                    if final_text_tokens > available_tokens:
+                        # 直接截断到更小的长度
+                        aggressive_chars = int(available_tokens * chars_per_token * 0.7)
+                        text_to_use = text[:aggressive_chars]
+                        # 继续减少直到符合要求
+                        max_iterations = 100  # 防止无限循环
+                        iteration = 0
+                        while count_tokens(text_to_use) > available_tokens and len(text_to_use) > 0 and iteration < max_iterations:
+                            text_to_use = text_to_use[:-max(100, len(text_to_use) // 10)]  # 每次减少至少100字符或10%
+                            iteration += 1
+                        print(f"[调试] 激进截断后: {count_tokens(text_to_use)} tokens ({len(text_to_use)} 字符)")
+        
+        # 再次检查截断后的总token数
+        final_text_tokens = count_tokens(text_to_use)
+        final_total_tokens = prompt_tokens + final_text_tokens
+        print(f"[调试] 最终: 文本 {final_text_tokens} tokens, 总计 {final_total_tokens} tokens")
+        
+        if final_total_tokens > MAX_INPUT_TOKENS:
+            raise ValueError(
+                f"即使截断后，总token数（{final_total_tokens}）仍超过限制（{MAX_INPUT_TOKENS}）。\n"
+                f"提示词: {prompt_tokens} tokens, 文本: {final_text_tokens} tokens。\n"
+                f"这可能是因为PDF文件提取的文本有问题。建议：\n"
+                f"1. 只选择部分文本进行总结\n"
+                f"2. 检查PDF文件是否有异常内容"
+            )
+        if final_total_tokens < MIN_INPUT_TOKENS:
+            raise ValueError(f"截断后文本过短（{final_text_tokens} tokens），无法生成总结。")
+        
+        full_prompt = f"{prompt}\n\n{text_to_use}"
 
         # 创建 OpenAI 客户端
         client = OpenAI(
@@ -346,12 +481,46 @@ The summary length configuration is saved in ReaderAccess.data.
             if config.get("stream", False):
                 # 流式响应
                 summary = ""
+                chunk_count = 0
+                last_chunk = None
+                finish_reason = None
+                
                 for chunk in response:
-                    if chunk.choices[0].delta.content:
-                        summary += chunk.choices[0].delta.content
+                    chunk_count += 1
+                    last_chunk = chunk
+                    try:
+                        if (chunk.choices and 
+                            len(chunk.choices) > 0 and 
+                            chunk.choices[0].delta):
+                            # 检查是否有 content
+                            if hasattr(chunk.choices[0].delta, 'content') and chunk.choices[0].delta.content:
+                                summary += chunk.choices[0].delta.content
+                            # 检查 finish_reason
+                            if hasattr(chunk.choices[0], 'finish_reason') and chunk.choices[0].finish_reason:
+                                finish_reason = chunk.choices[0].finish_reason
+                    except Exception as e:
+                        print(f"处理流式响应 chunk 时出错: {e}")
+                        continue
+                
+                # 如果没有任何内容，提供更详细的错误信息
+                if not summary:
+                    if chunk_count == 0:
+                        raise ValueError("API 没有返回任何数据流，请检查网络连接和 API 配置")
+                    else:
+                        error_msg = f"API 返回了 {chunk_count} 个数据块，但内容为空"
+                        if finish_reason:
+                            error_msg += f"。完成原因: {finish_reason}"
+                        error_msg += "。可能是文本过长、API 配置问题或模型不支持流式响应。建议：1) 关闭流式响应重试；2) 检查文本是否过长；3) 检查 API 配置。"
+                        raise ValueError(error_msg)
                 return summary
             else:
                 # 非流式响应
+                if not response.choices or len(response.choices) == 0:
+                    raise ValueError("API 返回的响应中没有 choices")
+                if not response.choices[0].message:
+                    raise ValueError("API 返回的响应中 message 为空")
+                if not response.choices[0].message.content:
+                    raise ValueError("API 返回的响应中 content 为空")
                 return response.choices[0].message.content
 
         except Exception as e:
