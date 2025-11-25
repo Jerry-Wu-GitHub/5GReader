@@ -1,4 +1,4 @@
-# Glueous Reader
+# 5GReader
 
 ## 项目层次图
 
@@ -37,7 +37,13 @@ graph
 
 ## 简介
 
-Glueous Reader 是一款可高度个性化的电子书阅读器，可以像胶水（glue）一样将各种插件粘合在一起。
+5GReader 是一款可高度个性化的电子书阅读器。
+
+- **G**eek ：本项目支持便捷的修改和自定义。
+- **G**lueous ：可以像胶水（glue）一样将各种插件粘合在一起。
+- **G**race ：用户能高雅地解决问题。<img src="https://inews.gtimg.com/om_bt/OocRNGFIBPxalHupyX96S01pqgXewuvFoOWhZJhi5CzkIAA/0" alt="高雅人士" style="height:64px;" />
+- **G**emini ：请输入文本。
+- **G**itHub ：本项目在 GitHub 上协作完成。
 
 主要使用 Python 语言进行开发。
 
