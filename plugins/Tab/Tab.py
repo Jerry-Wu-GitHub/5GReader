@@ -506,11 +506,11 @@ class Tab:
             return True
         except Exception as e:
             messagebox.showerror("错误", f"打开失败: {str(e)}")
-            self.reset_tab()
+            self.reset()
             return False
 
 
-    def reset_tab(self):
+    def reset(self):
         """重置标签页状态"""
         if self.doc:
             self.doc.close()
@@ -554,6 +554,7 @@ Provide core tab functionality for the PDF reader.
 - `context.close_tab(tab)`: Close the specified tab.
 - `context.tabs`: List of all open tabs.
 - `context.Tab`: The Tab class itself.
+- `context.FileHasher`: FileHasher is used to calculate the hash value of files and supports multiple algorithms.
 
 ## Depend
 
@@ -643,7 +644,6 @@ This plugin must be loaded before any other plugins that manipulate tabs.
         self.context.close_tab       = MethodType(self.close_tab      , self.context)
         self.context.tabs: List[Tab] = []
         self.context.Tab : type      = Tab
-        self.context.FileState       = FileState
         self.context.FileHasher      = FileHasher
 
         # 右键菜单

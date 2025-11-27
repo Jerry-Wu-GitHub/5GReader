@@ -136,7 +136,7 @@ class Reader:
         self.plugin_manager = PluginManager(self.access)
         self.plugin_manager.load_plugins_from_directory(Path(self.settings["plugin_directory_path"]))
         self.plugin_manager.bind_hotkeys()
-        self.plugin_manager.loaded()
+        self.root.after(0, self.plugin_manager.loaded)
 
 
     def update_menubar(self) -> None:
@@ -165,10 +165,10 @@ class Reader:
         执行在整个 mainloop 中要周期性执行的函数。
         """
         for (function, args) in self.periodically_executed_functions:
-            try:
-                function(*args)
-            except Exception as error:
-                print(f"in reader.periodically_execute: {function.__name__}: {error.__class__.__name__}: {error}")
+            # try:
+            function(*args)
+            # except Exception as error:
+            #     print(f"in reader.periodically_execute: {function.__name__}: {error.__class__.__name__}: {error}")
 
         # 每隔一定时间再次执行
         self.root.after(self.settings["frequency"], self.periodically_execute)
@@ -176,10 +176,10 @@ class Reader:
 
     def at_notebook_tab_changed(self, event) -> None:
         for (function, args) in self.at_notebook_tab_changed_functions:
-            # try:
-            function(event, *args)
-            # except Exception as error:
-            #     print(f"in reader.at_notebook_tab_changed: {function.__name__}: {error.__class__.__name__}: {error}")
+            try:
+                function(event, *args)
+            except Exception as error:
+                print(f"in reader.at_notebook_tab_changed: {function.__name__}: {error.__class__.__name__}: {error}")
 
 
     def mainloop(self) -> None:
