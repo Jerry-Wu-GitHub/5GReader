@@ -1,0 +1,737 @@
+"""
+OCR 插件：对文档中的图像进行光学字符识别
+"""
+from __future__ import annotations
+
+import threading
+from typing import Any, Dict, List, Tuple, override
+import fitz
+
+from glueous_plugin import Plugin
+
+
+class OCRPlugin(Plugin):
+    """
+    OCR 插件：自动识别文档中图像的文字并整合到 get_text 方法中。
+    """
+
+    # 插件信息
+    name = "OCRPlugin"
+    
+    description = """
+# OCRPlugin
+
+- name: OCRPlugin
+- author: Originally ZhengHongBo, edited by Little Liu
+- hotkeys: `Ctrl+Shift+O`
+- menu entrance: `工具 → OCR → 开启自动OCR`, `工具 → OCR → 重新识别当前页`, `工具 → OCR → 识别整本书`
+
+## Function
+
+使用 EasyOCR 库对文档中的图像进行光学字符识别（OCR），提取图像中的文本及其位置信息。
+
+- 支持自动 OCR：优先识别当前可见页面，然后是可选择页面
+- 支持手动重新识别当前页面
+- 支持识别整本书（后台运行，优先识别当前阅读页）
+- 识别结果缓存到 `data.json`，避免重复识别
+- 重载 `Page.get_text()` 方法，将 OCR 结果整合到原始文本中
+
+## Api
+
+重载了 `fitz.Page.get_text()` 方法，使其返回值包含 OCR 识别的文本。
+
+## Depend
+
+Python extension library:
+- easyocr
+- torch (EasyOCR 依赖)
+
+Other plugins:
+- TabPlugin
+
+## Others
+
+首次运行会下载 OCR 模型，可能需要较长时间。
+识别性能约 2 秒/页（A4 教科书标准）。
+"""
+
+    hotkeys = ["<Control-Shift-O>"]
+
+    def __init__(self, context):
+        super().__init__(context)
+        
+        # OCR 引擎（延迟初始化）
+        self.ocr_reader = None
+        self.ocr_lock = threading.Lock()
+        
+        # 自动 OCR 开关
+        self.auto_ocr_enabled = False
+        
+        # OCR 任务队列和工作线程
+        self.ocr_queue: List[Tuple[int, str, int]] = []  # [(priority, file_path, page_no), ...]
+        self.ocr_thread = None
+        self.stop_ocr_thread = False
+        
+        # 记录上次检查的页面，用于检测翻页
+        self.last_checked_page = None
+        
+        # 插件激活状态
+        self.is_active = True
+        
+        # 保存原始的 Tab.open 方法
+        self.original_tab_open = None
+
+
+    def initialize_ocr_reader(self) -> None:
+        """
+        初始化 OCR 引擎（延迟加载）。
+        """
+        if self.ocr_reader is not None:
+            return
+            
+        try:
+            import easyocr
+            import warnings
+            print("正在初始化 OCR 引擎...")
+            # 过滤 PyTorch 的警告信息
+            warnings.filterwarnings("ignore", category=UserWarning, module="torch")
+            # 支持中文和英文，使用 CPU 模式
+            self.ocr_reader = easyocr.Reader(
+                ["ch_sim", "en"], 
+                gpu=False,
+                verbose=False  # 减少输出信息
+            )
+            print("OCR 引擎初始化完成")
+        except ImportError:
+            print("错误：未安装 easyocr 库，请运行：pip install easyocr")
+            self.disable()
+        except Exception as e:
+            print(f"OCR 引擎初始化失败: {e}")
+            self.disable()
+
+
+    def get_ocr_cache_key(self, file_path: str, page_no: int) -> str:
+        """
+        生成 OCR 缓存的键名。
+        """
+        return f"{file_path}#page{page_no}"
+
+
+    def get_cached_ocr_result(self, file_path: str, page_no: int) -> List[Dict[str, Any]] | None:
+        """
+        从缓存中获取 OCR 结果。
+        
+        Returns:
+            List of OCR results or None if not cached
+        """
+        ocr_cache = self.context.data.setdefault("ocr_cache", {})
+        cache_key = self.get_ocr_cache_key(file_path, page_no)
+        return ocr_cache.get(cache_key)
+
+
+    def save_ocr_result(self, file_path: str, page_no: int, result: List[Dict[str, Any]]) -> None:
+        """
+        保存 OCR 结果到缓存。
+        """
+        ocr_cache = self.context.data.setdefault("ocr_cache", {})
+        cache_key = self.get_ocr_cache_key(file_path, page_no)
+        ocr_cache[cache_key] = result
+
+
+    def inject_ocr_text_to_page(self, tab, page: fitz.Page, ocr_results: List[Dict[str, Any]]) -> None:
+        """
+        将 OCR 结果作为不可见文本插入到页面中。
+        """
+        if not ocr_results:
+            return
+            
+        # 防止重复注入
+        if not hasattr(tab, "_injected_pages"):
+            tab._injected_pages = set()
+        
+        # 使用 (文件路径, 页码) 作为唯一标识
+        # 注意：这里假设 tab.doc 是稳定的
+        page_id = page.number
+        if page_id in tab._injected_pages:
+            return
+
+        try:
+            # 清理页面内容，修复潜在的语法错误，确保插入成功
+            page.clean_contents()
+
+            # 使用 TextWriter 进行批量写入，大幅提升性能
+            # 避免在循环中多次调用 insert_text 导致的重复流解析
+            tw = fitz.TextWriter(page.rect)
+            
+            # 尝试加载中文字体，如果失败则使用默认字体
+            font = None
+            try:
+                font = fitz.Font("china-s")
+            except Exception:
+                font = fitz.Font("helv")
+
+            for result in ocr_results:
+                text = result["text"]
+                bbox = result["bbox"]  # [x0, y0, x1, y1]
+                
+                if not text:
+                    continue
+                
+                # 计算插入点和字体大小
+                height = bbox[3] - bbox[1]
+                fontsize = max(5, height * 0.8)
+                point = fitz.Point(bbox[0], bbox[3] - height * 0.1)
+                
+                # 将文本添加到缓冲区
+                tw.append(
+                    point,
+                    text,
+                    fontsize=fontsize,
+                    font=font,
+                )
+            
+            # 一次性将所有文本写入页面（render_mode=3 表示不可见文本）
+            tw.write_text(page, render_mode=0)
+            
+            # 标记为已注入
+            tab._injected_pages.add(page_id)
+            
+        except Exception as e:
+            print(f"向页面插入 OCR 文本时出错: {e}")
+
+    def apply_ocr_to_current_tab(self, file_path: str, page_no: int) -> None:
+        """
+        将 OCR 结果应用到当前标签页（如果在主线程中）。
+        """
+        try:
+            current_tab = self.context.get_current_tab()
+            if not current_tab or not current_tab.doc:
+                return
+            
+            # 检查是否是同一个文件
+            if getattr(current_tab, "file_path", "") != file_path:
+                return
+            
+            # 检查页码是否有效
+            if page_no >= len(current_tab.doc):
+                return
+            
+            # 获取缓存结果
+            ocr_results = self.get_cached_ocr_result(file_path, page_no)
+            if not ocr_results:
+                return
+            
+            # 获取页面对象并插入文本
+            page = current_tab.doc[page_no]
+            # 强制注入（因为这是刚识别出来的，肯定没注入过，或者需要更新）
+            if hasattr(current_tab, "_injected_pages") and page_no in current_tab._injected_pages:
+                current_tab._injected_pages.remove(page_no)
+                
+            self.inject_ocr_text_to_page(current_tab, page, ocr_results)
+            
+        except Exception as e:
+            print(f"应用 OCR 结果到当前标签页时出错: {e}")
+
+    def perform_ocr_on_page(self, file_path: str, page_no: int) -> List[Dict[str, Any]]:
+        """
+        对指定页面执行 OCR 识别。
+        
+        Returns:
+            List of OCR results: [{"text": str, "bbox": [x0, y0, x1, y1], "confidence": float}, ...]
+        """
+        # 检查缓存
+        cached_result = self.get_cached_ocr_result(file_path, page_no)
+        if cached_result is not None:
+            return cached_result
+        
+        # 初始化 OCR 引擎
+        if self.ocr_reader is None:
+            self.initialize_ocr_reader()
+            if self.ocr_reader is None:
+                return []
+        
+        doc = None
+        try:
+            # 打开文档
+            doc = fitz.open(file_path)
+            if page_no >= len(doc):
+                print(f"页码 {page_no} 超出范围")
+                return []
+            
+            page = doc[page_no]
+            
+            # 获取页面上的所有图像
+            image_list = page.get_images()
+            
+            ocr_results = []
+            
+            if image_list:
+                # 方案 A: 提取页面中的图像进行 OCR
+                for img_index, img_info in enumerate(image_list):
+                    try:
+                        # 获取图像的 xref
+                        xref = img_info[0]
+                        
+                        # 提取图像数据
+                        base_image = doc.extract_image(xref)
+                        image_bytes = base_image["image"]
+                        
+                        # 获取图像在页面上的位置
+                        image_rects = page.get_image_rects(xref)
+                        if not image_rects:
+                            continue
+                        
+                        # 使用第一个矩形（通常图像只出现一次）
+                        image_bbox = image_rects[0]
+                        
+                        # 检查图像大小，过小的图像跳过
+                        if image_bbox.width < 10 or image_bbox.height < 10:
+                            continue
+                        
+                        # 从字节读取图像
+                        import io
+                        import numpy as np
+                        from PIL import Image
+                        
+                        image = Image.open(io.BytesIO(image_bytes))
+                        
+                        # 转换为 RGB（如果需要）
+                        if image.mode != "RGB":
+                            image = image.convert("RGB")
+                        
+                        # 保存原始尺寸（用于坐标转换）
+                        original_width = image.width
+                        original_height = image.height
+                        
+                        # 如果图像过大，缩小以提高性能
+                        max_dimension = 2000
+                        if max(image.width, image.height) > max_dimension:
+                            scale = max_dimension / max(image.width, image.height)
+                            new_size = (int(image.width * scale), int(image.height * scale))
+                            image = image.resize(new_size, Image.Resampling.LANCZOS)
+                        
+                        # 转换为 numpy 数组（EasyOCR 需要）
+                        image_array = np.array(image)
+                        
+                        # 执行 OCR
+                        with self.ocr_lock:
+                            ocr_output = self.ocr_reader.readtext(
+                                image_array,
+                                detail=1,
+                                paragraph=False,
+                                min_size=10,  # 最小文本框大小
+                            )
+                        
+                        # 处理 OCR 结果
+                        for detection in ocr_output:
+                            bbox_in_image, text, confidence = detection
+                            
+                            # 过滤低置信度结果
+                            if confidence < 0.2:
+                                continue
+                            
+                            # 将图像内坐标转换为页面坐标
+                            # bbox_in_image: [[x0, y0], [x1, y1], [x2, y2], [x3, y3]]
+                            # 如果图像被缩放过，需要按比例还原坐标
+                            img_width = image.width  # 当前（可能缩放后的）尺寸
+                            img_height = image.height
+                            
+                            # 计算文本框在图像中的相对位置
+                            x0_rel = min(point[0] for point in bbox_in_image) / img_width
+                            y0_rel = min(point[1] for point in bbox_in_image) / img_height
+                            x1_rel = max(point[0] for point in bbox_in_image) / img_width
+                            y1_rel = max(point[1] for point in bbox_in_image) / img_height
+                            
+                            # 转换为页面坐标
+                            page_x0 = image_bbox.x0 + x0_rel * image_bbox.width
+                            page_y0 = image_bbox.y0 + y0_rel * image_bbox.height
+                            page_x1 = image_bbox.x0 + x1_rel * image_bbox.width
+                            page_y1 = image_bbox.y0 + y1_rel * image_bbox.height
+                            
+                            ocr_results.append({
+                                "text": text.strip(),
+                                "bbox": [page_x0, page_y0, page_x1, page_y1],
+                                "confidence": float(confidence)
+                            })
+                    
+                    except Exception as e:
+                        print(f"处理图像 {img_index} 时出错: {e}")
+                        continue
+            
+            else:
+                # 方案 B: 页面没有图像对象，尝试渲染整个页面进行 OCR
+                # 这种情况常见于：
+                # 1. 图像被隐藏或以特殊方式存储
+                # 2. 页面看起来是扫描件但实际上是矢量路径（虽然这种情况通常不需要OCR，但如果用户要求OCR说明无法选中文本）
+                try:
+                    # 使用 2.0 倍缩放以提高识别率
+                    zoom = 2.0
+                    mat = fitz.Matrix(zoom, zoom)
+                    # 获取页面快照 (RGB)
+                    pix = page.get_pixmap(matrix=mat, alpha=False)
+                    
+                    # 转换为 numpy 数组
+                    import numpy as np
+                    
+                    # 确保是 RGB 格式
+                    if pix.n < 3:
+                        pix = fitz.Pixmap(fitz.csRGB, pix)
+                    
+                    # 从 buffer 创建 numpy 数组 (height, width, 3)
+                    image_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
+                    
+                    # 执行 OCR
+                    with self.ocr_lock:
+                        ocr_output = self.ocr_reader.readtext(
+                            image_array,
+                            detail=1,
+                            paragraph=False,
+                            min_size=10,
+                        )
+                    
+                    # 处理结果
+                    for detection in ocr_output:
+                        bbox_in_image, text, confidence = detection
+                        
+                        if confidence < 0.2:
+                            continue
+                        
+                        # 坐标转换：从 pixmap 坐标 (缩放后) 转换回 页面坐标
+                        # pixmap 坐标原点 (0,0) 对应 page.rect.tl (top-left)
+                        
+                        x0_pix = min(point[0] for point in bbox_in_image)
+                        y0_pix = min(point[1] for point in bbox_in_image)
+                        x1_pix = max(point[0] for point in bbox_in_image)
+                        y1_pix = max(point[1] for point in bbox_in_image)
+                        
+                        # 缩放回页面尺寸
+                        page_x0 = x0_pix / zoom + page.rect.x0
+                        page_y0 = y0_pix / zoom + page.rect.y0
+                        page_x1 = x1_pix / zoom + page.rect.x0
+                        page_y1 = y1_pix / zoom + page.rect.y0
+                        
+                        ocr_results.append({
+                            "text": text.strip(),
+                            "bbox": [page_x0, page_y0, page_x1, page_y1],
+                            "confidence": float(confidence)
+                        })
+                        
+                except Exception as e:
+                    print(f"渲染页面进行 OCR 时出错: {e}")
+
+            # 保存到缓存
+            self.save_ocr_result(file_path, page_no, ocr_results)
+            
+            # 通知主线程应用结果
+            if hasattr(self.context, "root"):
+                self.context.root.after(0, lambda: self.apply_ocr_to_current_tab(file_path, page_no))
+            
+            return ocr_results
+            
+        except Exception as e:
+            print(f"OCR 识别页面 {page_no + 1} 时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+        finally:
+            if doc:
+                doc.close()
+
+
+
+
+    def add_to_ocr_queue(self, file_path: str, page_no: int, priority: int = 2) -> None:
+        """
+        添加页面到 OCR 队列。
+        
+        Args:
+            file_path: 文件路径
+            page_no: 页码
+            priority: 优先级 (0=最高[当前页], 1=高[可见页], 2=普通[可选择页])
+        """
+        task = (priority, file_path, page_no)
+        
+        # 检查是否已存在（忽略优先级）
+        for i, (p, f, pn) in enumerate(self.ocr_queue):
+            if f == file_path and pn == page_no:
+                # 如果新优先级更高，更新优先级并移动位置
+                if priority < p:
+                    self.ocr_queue.pop(i)
+                    break
+                else:
+                    return
+        
+        # 按优先级插入（优先级数字越小越优先）
+        inserted = False
+        for i, (p, _, _) in enumerate(self.ocr_queue):
+            if priority < p:
+                self.ocr_queue.insert(i, task)
+                inserted = True
+                break
+        
+        if not inserted:
+            self.ocr_queue.append(task)
+
+
+    def ocr_worker(self) -> None:
+        """
+        OCR 工作线程，处理队列中的识别任务。
+        """
+        import time
+        while not self.stop_ocr_thread:
+            if self.ocr_queue:
+                priority, file_path, page_no = self.ocr_queue.pop(0)
+                print(f"正在识别 (优先级 {priority}): {file_path} 第 {page_no + 1} 页")
+                self.perform_ocr_on_page(file_path, page_no)
+            else:
+                # 队列为空，休眠一会
+                time.sleep(0.5)
+
+
+    def start_ocr_thread(self) -> None:
+        """
+        启动 OCR 工作线程。
+        """
+        if self.ocr_thread is None or not self.ocr_thread.is_alive():
+            self.stop_ocr_thread = False
+            self.ocr_thread = threading.Thread(target=self.ocr_worker, daemon=True)
+            self.ocr_thread.start()
+
+
+    def stop_ocr_worker(self) -> None:
+        """
+        停止 OCR 工作线程。
+        """
+        self.stop_ocr_thread = True
+        if self.ocr_thread:
+            self.ocr_thread.join(timeout=2)
+
+
+    def toggle_auto_ocr(self) -> None:
+        """
+        切换自动 OCR 开关。
+        """
+        self.auto_ocr_enabled = not self.auto_ocr_enabled
+        
+        if self.auto_ocr_enabled:
+            print("已开启自动 OCR")
+            self.start_ocr_thread()
+            # 触发当前可见页面的识别
+            self.trigger_visible_pages_ocr()
+        else:
+            print("已关闭自动 OCR")
+            self.stop_ocr_worker()
+
+
+    def trigger_visible_pages_ocr(self) -> None:
+        """
+        触发当前可见页面和可选择页面的 OCR 识别。
+        优先级：当前页面(0) > 可见页面(1) > 可选择页面(2)
+        """
+        current_tab = self.context.get_current_tab()
+        if not current_tab or not current_tab.doc:
+            return
+        
+        file_path = current_tab.file_path
+        
+        # 最高优先级：当前页面
+        current_page = current_tab.page_no
+        self.add_to_ocr_queue(file_path, current_page, priority=0)
+        
+        # 高优先级：可见页面
+        for page, _, _ in current_tab.visible_page_positions:
+            if page.number != current_page:
+                self.add_to_ocr_queue(file_path, page.number, priority=1)
+        
+        # 普通优先级：可选择页面
+        for page, _ in current_tab.selectable_page_positions:
+            if page.number != current_page:
+                self.add_to_ocr_queue(file_path, page.number, priority=2)
+
+
+    def ocr_whole_document(self) -> None:
+        """
+        识别整本书。
+        """
+        current_tab = self.context.get_current_tab()
+        if not current_tab or not current_tab.doc:
+            from tkinter import messagebox
+            messagebox.showwarning("提示", "请先打开一个文档")
+            return
+        
+        file_path = current_tab.file_path
+        total_pages = len(current_tab.doc)
+        
+        print(f"开始识别整本书: {file_path} ({total_pages} 页)")
+        
+        # 添加所有页面到队列，优先级为 3 (最低)
+        # 仅添加未缓存的页面
+        count = 0
+        for page_no in range(total_pages):
+            if not self.get_cached_ocr_result(file_path, page_no):
+                self.add_to_ocr_queue(file_path, page_no, priority=3)
+                count += 1
+            
+        print(f"已添加 {count} 个页面到 OCR 队列")
+        
+        # 启动线程
+        self.start_ocr_thread()
+        
+        # 触发一次可见页面识别（确保当前页优先）
+        self.trigger_visible_pages_ocr()
+
+
+    def reocr_current_page(self) -> None:
+        """
+        重新识别当前页面。
+        """
+        current_tab = self.context.get_current_tab()
+        if not current_tab or not current_tab.doc:
+            from tkinter import messagebox
+            messagebox.showwarning("提示", "请先打开一个文档")
+            return
+        
+        file_path = current_tab.file_path
+        page_no = current_tab.page_no
+        
+        # 清除缓存
+        ocr_cache = self.context.data.setdefault("ocr_cache", {})
+        cache_key = self.get_ocr_cache_key(file_path, page_no)
+        if cache_key in ocr_cache:
+            del ocr_cache[cache_key]
+        
+        # 重新识别
+        print(f"重新识别第 {page_no + 1} 页...")
+        result = self.perform_ocr_on_page(file_path, page_no)
+        
+        from tkinter import messagebox
+        messagebox.showinfo("完成", f"识别完成，找到 {len(result)} 个文本块")
+
+
+    def periodic_check(self) -> None:
+        """
+        周期性检查函数，检测页面变化并触发 OCR 或注入缓存。
+        """
+        if not self.is_active:
+            return
+
+        try:
+            current_tab = self.context.get_current_tab()
+            if not current_tab or not current_tab.doc:
+                self.last_checked_page = None
+                return
+            
+            # 1. 检查并注入可见页面的缓存（无论是否开启自动 OCR）
+            self.check_and_inject_visible_pages(current_tab)
+            
+            # 2. 自动 OCR 逻辑
+            if self.auto_ocr_enabled:
+                current_page_key = (current_tab.file_path, current_tab.page_no)
+                # 检测页面是否变化
+                if self.last_checked_page != current_page_key:
+                    self.last_checked_page = current_page_key
+                    self.trigger_visible_pages_ocr()
+                    
+        except Exception as e:
+            print(f"OCR 周期性检查出错: {e}")
+
+    def check_and_inject_visible_pages(self, tab) -> None:
+        """
+        检查当前可见页面，如果有 OCR 缓存但未注入，则注入。
+        """
+        try:
+            file_path = getattr(tab, "file_path", None)
+            if not file_path:
+                return
+
+            # 获取可见页面
+            # 注意：visible_page_positions 可能会触发计算，不要太频繁调用
+            # 这里假设 periodic_check 频率适中（例如 0.5s 或 1s）
+            visible_pages = tab.visible_page_positions
+            
+            for page, _, _ in visible_pages:
+                # 检查是否已注入
+                if hasattr(tab, "_injected_pages") and page.number in tab._injected_pages:
+                    continue
+                
+                # 检查是否有缓存
+                ocr_results = self.get_cached_ocr_result(file_path, page.number)
+                if ocr_results:
+                    # 注入
+                    self.inject_ocr_text_to_page(tab, page, ocr_results)
+                    
+        except Exception as e:
+            pass
+
+
+    @override
+    def loaded(self) -> None:
+        """
+        插件加载时执行：注册菜单项并重载 Tab.open 方法。
+        """
+        # 注册周期性检查函数
+        self.context.add_periodically_execute_function(self.periodic_check)
+
+        # 添加菜单项
+        self.context.add_menu_command(
+            path=["工具", "OCR"],
+            label="开启/关闭自动OCR",
+            command=self.toggle_auto_ocr,
+            accelerator="Ctrl+Shift+O"
+        )
+        
+        self.context.add_menu_command(
+            path=["工具", "OCR"],
+            label="重新识别当前页",
+            command=self.reocr_current_page
+        )
+
+        self.context.add_menu_command(
+            path=["工具", "OCR"],
+            label="识别整本书",
+            command=self.ocr_whole_document
+        )
+        
+        # 重载 Tab.open 方法
+        # 注意：不再在 open 时全量注入，改为在 periodic_check 中按需注入
+        Tab = self.context.Tab
+        if self.original_tab_open is None:
+            self.original_tab_open = Tab.open
+            
+            plugin_self = self
+            
+            def new_open(tab_instance, *args, **kwargs):
+                # 调用原始 open
+                plugin_self.original_tab_open(tab_instance, *args, **kwargs)
+                
+                # 初始化注入记录集合
+                tab_instance._injected_pages = set()
+                
+                # 触发一次检查（延迟一点点，等待布局计算完成）
+                if hasattr(plugin_self.context, "root"):
+                    plugin_self.context.root.after(100, lambda: plugin_self.check_and_inject_visible_pages(tab_instance))
+            
+            Tab.open = new_open
+
+
+    @override
+    def run(self) -> None:
+        """
+        快捷键触发时执行：切换自动 OCR。
+        """
+        self.toggle_auto_ocr()
+
+
+    @override
+    def unloaded(self) -> None:
+        """
+        插件卸载时执行：恢复原始方法并停止工作线程。
+        """
+        self.is_active = False
+        
+        # 停止 OCR 线程
+        self.stop_ocr_worker()
+        
+        # 恢复原始 Tab.open 方法
+        if self.original_tab_open is not None:
+            self.context.Tab.open = self.original_tab_open

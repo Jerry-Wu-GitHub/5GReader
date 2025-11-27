@@ -15,6 +15,7 @@ from openai import AsyncOpenAI, BadRequestError, OpenAI, RateLimitError
 import pyperclip
 import tiktoken
 
+from glueous import ReaderAccess
 from glueous_plugin import Plugin
 
 
@@ -313,7 +314,7 @@ For large documents, the text will be compressed using AI to fit within token li
                 mindmap_text = "\n".join(mindmap_text.split("\n")[1:-1])
 
             # 在主线程中显示结果
-            MindmapTextResult(mindmap_text, self.context._reader.root)
+            MindmapTextResult(self.context, mindmap_text, self.context._reader.root)
 
         except RateLimitError:
             messagebox.showerror("错误", f"请求过快。您可以在AI配置中取消并发，或者换用可接受 token 数更大的模型。")
@@ -530,7 +531,8 @@ class MindmapTextResult():
 
     INVALID_FILENAME_CHARS = ['\\', '/', ':', '*', '?', '"', '<', '>', '|']
 
-    def __init__(self, mindmap_text: str, parent):
+    def __init__(self, context: ReaderAccess, mindmap_text: str, parent):
+        self.context = context
         self.parent = parent
         self.text_widget = None
         self._create_widgets(mindmap_text)
@@ -619,7 +621,7 @@ class MindmapTextResult():
         """
         try:
             pyperclip.copy(self.mindmap_text)
-            messagebox.showinfo("成功", "已复制到剪贴板")
+            self.context.print("已复制到剪贴板")
             return True
         except Exception as error:
             messagebox.showerror("错误", f"复制失败：{error}")
@@ -675,7 +677,7 @@ class MindmapTextResult():
         try:
             with open(file_path, 'w', encoding='utf-8') as file:
                 file.write(self.mindmap_text)
-            messagebox.showinfo("成功", f"文件已成功保存到:\n{file_path}")
+            self.context.print(f"文件已成功保存到:\n{file_path}")
         except Exception as e:
             messagebox.showerror("错误", f"保存文件失败: {e}")
 
@@ -713,7 +715,7 @@ class MindmapTextResult():
 
         try:
             subprocess.run(['markmap.cmd', md_file, '-o', output_file_path])
-            messagebox.showinfo("成功", f"文件已成功保存到:\n{output_file_path}")
+            self.context.print(f"文件已成功保存到:\n{output_file_path}")
         except Exception as error:
             messagebox.showerror("错误", f"保存文件失败: {error}")
 

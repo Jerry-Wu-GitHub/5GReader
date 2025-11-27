@@ -66,11 +66,14 @@ Other plugins:
         # OCR 引擎（延迟初始化）
         self._ocr_reader = None
 
-        # 进程池
+        # 进程池（没用到）
         self._executor = None  # 不立即创建
 
         # OCR 工作线程
         self.ocr_thread = None
+
+        # 保存原始的 Tab.open 方法
+        self.original_tab_open = None
 
 
     @property
@@ -303,24 +306,34 @@ Other plugins:
             if not text:
                 continue
 
-            # 大致计算字号
-            fontsize = (points[3][1] - points[0][1]) * 0.83
+            rect = fitz.Rect(points[0][0], points[0][1], points[2][0], points[2][1])
 
-            x = points[0][0]
-            y = points[2][1] + (points[0][1] - points[2][1]) / 4
-
-            chunk_size = 8
-            chunk_width = (points[2][0] - points[3][0]) / len(text) * chunk_size
-            for i in range((len(text) + chunk_size - 1) // chunk_size):
-                # 插入文本到页面
-                page.insert_text(
-                    point = (x, y), # 左下角坐标
-                    text = text[chunk_size*i: chunk_size*(i+1)],
-                    fontsize = fontsize,
-                    # render_mode = 3  # 设为3表示不渲染文本（隐藏）
+            # 二分查找搜索最佳字号
+            left = 1
+            right = points[3][1] - points[0][1]
+            while right - left >= 0.5:
+                shape = page.new_shape()
+                mid = (left + right) / 2
+                result = shape.insert_textbox(
+                    rect,
+                    text,
+                    fontsize = mid,
+                    fontname = "china-ss",
                 )
-                x += chunk_width
-            # page.insert_textbox((points[0][0], points[0][1], points[2][0], points[2][1]), text, fontsize = fontsize)
+                if result >= 0:
+                    # 可以放下
+                    left = mid
+                else:
+                    # 放不下
+                    right = mid
+
+            page.insert_textbox(
+                rect,
+                text,
+                fontsize = left,
+                fontname = "china-ss",
+                # render_mode = 3 # 设为3表示不渲染文本（隐藏）
+            )
 
 
     def ocr_update_page(self, page: fitz.Page, cache: Dict[int, List[Tuple[List, str]]]) -> None:
@@ -411,10 +424,10 @@ Other plugins:
         self.context.add_periodically_execute_function(self.start_ocr_thread)
 
         Tab = self.context.Tab
-        original_open = Tab.open
+        self.original_tab_open = Tab.open
 
         def open_with_ocr(tab: Tab) -> None:
-            original_open(tab)
+            self.original_tab_open(tab)
 
             if self.auto_ocr_enabled:
                 file_ocr_cache = self.get_ocr_cache(tab.file_path)
@@ -492,6 +505,21 @@ Other plugins:
             self.ocr_update_page(page, file_ocr_cache)
 
 
+    def stop_ocr_worker(self) -> None:
+        """
+        停止 OCR 工作线程。
+        """
+        if self.ocr_thread:
+            self.ocr_thread.join(timeout=2)
+
+
     @override
     def unloaded(self):
-        pass
+        """
+        插件卸载时执行：恢复原始方法并停止工作线程。
+        """
+        self.stop_ocr_worker()
+
+        # 恢复原始 Tab.open 方法
+        if self.original_tab_open is not None:
+            self.context.Tab.open = self.original_tab_open
