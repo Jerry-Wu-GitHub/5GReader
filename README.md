@@ -1,5 +1,38 @@
 # 5GReader
 
+<img src="./static/icon/GR.png" alt="icon" style="height:256px;" />
+
+---
+
+## 简介
+
+5GReader 是一款可高度个性化的电子书阅读器。
+
+- **G**eek ：本项目支持便捷的修改和自定义。
+- **G**lueous ：可以像胶水（glue）一样将各种插件粘合在一起。
+- **G**raceful ：用户能高雅地解决问题。<img src="https://inews.gtimg.com/om_bt/OocRNGFIBPxalHupyX96S01pqgXewuvFoOWhZJhi5CzkIAA/0" alt="高雅人士" style="height:48px;" />
+- **G**emini ：请输入文本。
+- **G**itHub ：本项目在 GitHub 上协作完成。
+
+主要使用 Python 语言进行开发。
+
+底层调用了 Python 的扩展库 PyMuPDF 来实现电子书文件的读取和渲染。PyMuPDF 支持以下文件格式：
+
+- **PDF** - Adobe Portable Document Format
+- **XPS** - Open XML Paper Specification
+- **EPUB** - Electronic Publication
+- **CBZ** - Comic Book Archive
+- **FB2** - Fiction - FictionBook 2.0
+- **MOBI** - Mobipocket eBook
+
+前端（UI界面）使用 Python 的标准库 Tkinter 进行开发。目前窗口分为三部分：
+
+1. 顶层的菜单栏。
+2. 中间的工具栏。
+3. 下面的标签页。
+
+---
+
 ## 项目层次图
 
 ```mermaid
@@ -35,32 +68,7 @@ graph
 	access <-->|self.context| plugin2
 ```
 
-## 简介
-
-5GReader 是一款可高度个性化的电子书阅读器。
-
-- **G**eek ：本项目支持便捷的修改和自定义。
-- **G**lueous ：可以像胶水（glue）一样将各种插件粘合在一起。
-- **G**race ：用户能高雅地解决问题。<img src="https://inews.gtimg.com/om_bt/OocRNGFIBPxalHupyX96S01pqgXewuvFoOWhZJhi5CzkIAA/0" alt="高雅人士" style="height:64px;" />
-- **G**emini ：请输入文本。
-- **G**itHub ：本项目在 GitHub 上协作完成。
-
-主要使用 Python 语言进行开发。
-
-底层调用了 Python 的扩展库 PyMuPDF 来实现电子书文件的读取和渲染。PyMuPDF 支持以下文件格式：
-
-- **PDF** - Adobe Portable Document Format
-- **XPS** - Open XML Paper Specification
-- **EPUB** - Electronic Publication
-- **CBZ** - Comic Book Archive
-- **FB2** - Fiction - FictionBook 2.0
-- **MOBI** - Mobipocket eBook
-
-前端（UI界面）使用 Python 的标准库 Tkinter 进行开发。目前窗口分为三部分：
-
-1. 顶层的菜单栏。
-2. 中间的工具栏。
-3. 下面的标签页。
+---
 
 ## 插件
 
@@ -241,6 +249,8 @@ other things you would like other developers to know...
 - 不要直接修改已有插件的代码文件（注释除外）。如需给已有类添加功能，请使用 `types.MethodType` 或 `property` 来动态添加。
 - [编程规范](编程规范.md) 
 
+---
+
 ## 快速开始
 
 1. 安装 Python ≥3.8。
@@ -252,6 +262,8 @@ other things you would like other developers to know...
     ```
 
 3. 运行 [`/main.py`](/main.py) 。
+
+---
 
 ## 注意
 
