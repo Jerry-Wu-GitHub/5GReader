@@ -247,7 +247,7 @@ other things you would like other developers to know...
 - 快捷键冲突：如果你的插件跟已有插件的快捷键一样，会触发后加载的插件。
 - 插件加载顺序：如果在你的插件的 `loaded` 方法中需要访问 `ReaderAccess` 对象的 `member` 成员，而定义该成员的插件在你的插件之后才被加载，那么你的插件的 `loaded` 方法将会报错并中断执行。为避免此类情况的发生，请在 [`/plugins/__init__.py`](/plugins/__init__.py) 中更新插件加载顺序。
 - 不要直接修改已有插件的代码文件（注释除外）。如需给已有类添加功能，请使用 `types.MethodType` 或 `property` 来动态添加。
-- [编程规范](编程规范.md) 
+- [编程规范](./schedule/编程规范.md) 
 
 ---
 

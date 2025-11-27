@@ -84,13 +84,13 @@ None
             selected_text = self.context.get_selected_text()
 
             if not selected_text:
-                print("没有被选中的文本")
+                self.context.print("没有被选中的文本")
                 return
 
             # 复制到剪贴板
             pyperclip.copy(selected_text)
 
-            print("复制成功")
+            self.context.print("复制成功")
 
         except Exception as e:
             messagebox.showerror("错误", f"复制失败: {str(e)}")

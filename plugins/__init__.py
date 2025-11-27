@@ -8,6 +8,7 @@ plugin_loading_order: List[str] = [
     # 基础插件
     "ContextMenuPlugin",
     "TabPlugin",
+    "CanvasFadeBoxPlugin",
 
     # 文件
     "OpenPlugin",
