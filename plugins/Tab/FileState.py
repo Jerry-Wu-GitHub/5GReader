@@ -5,6 +5,7 @@ FileState 类。
 from __future__ import annotations
 
 from enum import Enum
+import hashlib
 from typing import Any, Dict, List
 
 
@@ -277,3 +278,54 @@ class FileState:
             "display_r2l"       : self.display_r2l,
             "reparse_idx"       : self.reparse_idx
         }
+
+
+
+class FileHasher:
+    """
+    FileHasher 用于计算文件的哈希值，支持多种算法。
+    """
+
+    ALGORITHMS_GUARANTEED = hashlib.algorithms_guaranteed
+    ALGORITHMS_AVAILABLE  = hashlib.algorithms_available
+    DEFAULT_ALGORITHM = "sha256"
+
+    def __init__(self, algorithm: str = None):
+        if algorithm is None:
+            algorithm = self.DEFAULT_ALGORITHM
+        self._check_algorithm(algorithm)
+        self._algorithm = algorithm
+
+
+    @classmethod
+    def _check_algorithm(cls, algorithm: str):
+        if algorithm not in cls.ALGORITHMS_AVAILABLE:
+            raise ValueError(f"unsupported algorithms: {algorithm}")
+
+
+    @property
+    def algorithm(self):
+        return self._algorithm
+
+    @algorithm.setter
+    def algorithm(self, value):
+        self._check_algorithm(value)
+        self._algorithm = value
+
+
+    def hash_file(self, filepath, chunk_size: int = 8192) -> int:
+        """
+        计算文件哈希值（支持多种算法）
+
+        :param filepath: 文件路径
+        :param chunk_size: 每次读取的字节数
+        :return: 十六进制哈希值字符串
+        """
+        hash_obj = hashlib.new(self.algorithm)
+
+        with open(filepath, 'rb') as f:
+            # 分块读取并更新哈希
+            while chunk := f.read(chunk_size):
+                hash_obj.update(chunk)
+
+        return hash_obj.hexdigest()

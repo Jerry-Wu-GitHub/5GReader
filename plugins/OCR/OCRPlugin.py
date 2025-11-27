@@ -85,9 +85,9 @@ Other plugins:
             return
 
         try:
+            print("正在初始化 OCR 引擎...")
             import easyocr
             import warnings
-            print("正在初始化 OCR 引擎...")
             # 过滤 PyTorch 的警告信息
             warnings.filterwarnings("ignore", category=UserWarning, module="torch")
             # 支持中文和英文，使用 CPU 模式

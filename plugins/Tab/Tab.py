@@ -10,7 +10,7 @@ from types import MethodType
 from PIL import Image, ImageTk
 import fitz  # PyMuPDF
 
-from plugins.Tab.FileState import FileState
+from plugins.Tab.FileState import FileState, FileHasher
 
 from glueous import ReaderAccess
 from glueous_plugin import Plugin
@@ -36,17 +36,7 @@ class Tab:
         self.frame = ttk.Frame(self.notebook)  # 标签页内容框架
         self.notebook.add(self.frame)          # 将frame添加到Notebook
 
-        # 从应用数据中搜索这本书的数据
-        file_states = self.context.data.setdefault("file_states", [])
-        for file_state in file_states:
-            # 查找路径相同的
-            if file_state["file_path"] == file_path:
-                self.state = file_state
-                break
-        else:
-            # 找遍了也没找到
-            self.state = FileState(file_path).to_json()
-            file_states.insert(0, self.state)
+        self.state = FileState(file_path).to_json()
         self.doc = None  # PyMuPDF文档对象
 
         self.tk_images = []
@@ -466,6 +456,27 @@ class Tab:
         self.h_scroll.config(command=self.canvas.xview)
 
 
+    def _read_state(self) -> None:
+        """
+        从应用数据中搜索这本书的数据
+        """
+        file_path = self.file_path
+        
+        file_states = self.context.data.setdefault("file_states", {})
+        if not isinstance(file_states, dict):
+            file_states = {}
+            self.context.data["file_states"] = file_states
+
+        file_hash = FileHasher().hash_file(file_path)
+        if file_hash in file_states:
+            self.state = file_states[file_hash]
+            self.state["file_path"] = file_path
+        else:
+            self.state = FileState(self.file_path).to_json()
+            file_states[file_hash] = self.state
+
+
+
     def open(self) -> bool:
         """
         打开文件并初始化。
@@ -477,6 +488,9 @@ class Tab:
             if self.doc:
                 self.doc.close()
 
+            self._read_state()
+
+            # 用 pymupdf 读取文档
             self.doc = fitz.open(self.file_path)
 
             # 更新标签页标题（显示文件名）
@@ -629,6 +643,8 @@ This plugin must be loaded before any other plugins that manipulate tabs.
         self.context.close_tab       = MethodType(self.close_tab      , self.context)
         self.context.tabs: List[Tab] = []
         self.context.Tab : type      = Tab
+        self.context.FileState       = FileState
+        self.context.FileHasher      = FileHasher
 
         # 右键菜单
         self.context.add_at_notebook_tab_changed_function(self.rebind_context_menu)

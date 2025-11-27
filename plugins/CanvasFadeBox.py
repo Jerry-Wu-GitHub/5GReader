@@ -166,20 +166,6 @@ class CanvasFadeBox:
 
     def _draw_rounded_rectangle(self, draw, x1, y1, x2, y2, radius, **kwargs):
         """绘制圆角矩形"""
-        # points = [
-        #     x1 + radius, y1,
-        #     x2 - radius, y1,
-        #     x2, y1,
-        #     x2, y1 + radius,
-        #     x2, y2 - radius,
-        #     x2, y2,
-        #     x2 - radius, y2,
-        #     x1 + radius, y2,
-        #     x1, y2,
-        #     x1, y2 - radius,
-        #     x1, y1 + radius,
-        #     x1, y1
-        # ]
         draw.rounded_rectangle([x1, y1, x2, y2], radius = radius, **kwargs)
 
 
@@ -208,6 +194,7 @@ Provides a `print` API for other plugins to display messages on the canvas.
 
 ## Api
 
+- `context.CanvasFadeBox`: A class that implemented for gradually entering and exiting text.
 - `context.print(text, ...)`: Display a message on the canvas with fade-in and fade-out effects.
 
 ## Depend
