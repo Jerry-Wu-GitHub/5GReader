@@ -11,7 +11,52 @@ import warnings
 import fitz
 
 from glueous_plugin import Plugin
-# import plugins.OCR.ocr_worker as ocr_worker
+
+
+
+OCRResult = Tuple[Tuple[Tuple[int, int], Tuple[int, int]], str, float, str]
+
+
+
+def select_fontname(text: str, fontnames: List[str]) -> str:
+    for fontname in fontnames:
+        if all(fitz.Font(fontname).has_glyph(ord(char)) for char in text):
+            return fontname
+    return fontnames[-1]
+
+
+
+# def calculate_fontsize(
+#     rect: Tuple[Tuple[int, int], Tuple[int, int]],
+#     text: str,
+#     fontname: str,
+#     relative_error: float
+# ) -> float:
+#     """
+#     计算可以塞进 rect 矩形的最大字号。
+#     """
+#     if not text:
+#         return 0
+
+#     font = fitz.Font(fontname)
+
+#     # 计算宽度上限
+#     width_limit = rect[1][0] - rect[0][0]
+
+#     # 二分查找搜索最佳字号
+#     left = 1
+#     right = rect[1][1] - rect[0][1]
+#     while (right - left) / left >= relative_error:
+#         mid = (left + right) / 2
+#         text_width = font.text_length(text, mid)
+#         if text_width < width_limit:
+#             # 可以放下
+#             left = mid
+#         else:
+#             # 放不下
+#             right = mid
+
+#     return left
 
 
 
@@ -167,6 +212,31 @@ Other plugins:
         self.ocr_settings["max_tasks"] = max(value, 1) # 不能为 0 或负数
 
 
+    @property
+    def fontnames(self) -> str:
+        """
+        返回插入文字的字体。
+        """
+        return self.ocr_settings.setdefault("fontnames", ["hevi", "china-s", "china-ss"])
+
+
+    @property
+    def fontsize_relative_error(self) -> float:
+        """
+        返回计算插入文字的字号的相对误差。
+        """
+        return self.ocr_settings.setdefault("fontsize_relative_error", 0.01)
+
+    @fontsize_relative_error.setter
+    def fontsize_relative_error(self, value):
+        """
+        设置计算插入文字的字号的相对误差。
+        """
+        if value <= 0:
+            raise ValueError("`fontsize_relative_error` should be a positive number")
+        self.ocr_settings["fontsize_relative_error"] = value
+
+
     def enabled_auto_ocr(self):
         """
         启用自动 OCR 。
@@ -248,7 +318,8 @@ Other plugins:
         return (start_x + x * scale_x, start_y + y * scale_y)
 
 
-    def perform_ocr(self, page: fitz.Page) -> List[Tuple[List[Tuple[int, int]], str]]:
+
+    def perform_ocr(self, page: fitz.Page) -> List[OCRResult]:
         """
         对 page 对象上的所有图片进行 OCR 。
 
@@ -257,11 +328,11 @@ Other plugins:
         Return like:
 
             [
-                ([(x1, y1), (x2, y2), (x3, y3), (x4, y4)], "text"),
+                ([(x0, y0), (x1, y1)], "text", fontsize, "fontname"),
                 ...
             ]
 
-        其中 (x1, y1), (x2, y2), (x3, y3), (x4, y4) 依次是这段文字在 page 上的左上角、右上角、右下角、左下角坐标。
+        其中 (x0, y0), (x1, y1) 依次是这段文字在 page 上的左上角、右下角坐标。
         """
 
         ocr_results = []
@@ -289,50 +360,55 @@ Other plugins:
             # 转换坐标
             img_start_coord = (img_rect.x0, img_rect.y0)
             for (points, text, _) in ocr_raw_results:
+                if not text:
+                    continue
+
+                rect = (
+                    self.img2page_coord(points[0], img_start_coord, scale),
+                    self.img2page_coord(points[2], img_start_coord, scale),
+                )
+
+                # 选择字体
+                fontname = select_fontname(text, self.fontnames)
+
+                # 计算字号
+                width_limit = rect[1][0] - rect[0][0]
+                fontsize = width_limit / fitz.Font(fontname).text_length(text, 1)
+
                 ocr_results.append((
-                    [self.img2page_coord(point, img_start_coord, scale) for point in points],
-                    text
+                    rect,
+                    text,
+                    fontsize,
+                    fontname
                 ))
 
         return ocr_results
 
 
-    @staticmethod
-    def insert_into_page(ocr_results: List[Tuple[List[Tuple[int, int]], str]], page: fitz.Page) -> None:
+    def insert_into_page(self, ocr_results: List[OCRResult], page: fitz.Page) -> None:
         """
         将 OCR 结果插入到页面中。
         """
-        for (points, text) in ocr_results:
+        for (((x0, y0), (x1, y1)), text, fontsize, fontname) in ocr_results:
             if not text:
                 continue
 
-            rect = fitz.Rect(points[0][0], points[0][1], points[2][0], points[2][1])
+            # rect = fitz.Rect(x0, y0, x1, y1)
 
-            # 二分查找搜索最佳字号
-            left = 1
-            right = points[3][1] - points[0][1]
-            while right - left >= 0.5:
-                shape = page.new_shape()
-                mid = (left + right) / 2
-                result = shape.insert_textbox(
-                    rect,
-                    text,
-                    fontsize = mid,
-                    fontname = "china-ss",
-                )
-                if result >= 0:
-                    # 可以放下
-                    left = mid
-                else:
-                    # 放不下
-                    right = mid
+            # page.insert_textbox(
+            #     rect,
+            #     text,
+            #     fontsize = fontsize,
+            #     fontname = fontname,
+            #     # render_mode = 3 # 设为3表示不渲染文本（隐藏）
+            # )
 
-            page.insert_textbox(
-                rect,
+            page.insert_text(
+                (x0, y1 - fontsize * 0.3),
                 text,
-                fontsize = left,
-                fontname = "china-ss",
-                render_mode = 3 # 设为3表示不渲染文本（隐藏）
+                fontsize = fontsize,
+                fontname = fontname,
+                # render_mode = 3 # 设为3表示不渲染文本（隐藏）
             )
 
 

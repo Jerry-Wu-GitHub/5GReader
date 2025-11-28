@@ -620,7 +620,7 @@ This plugin must be loaded before any other plugins that manipulate tabs.
         if tab in access.tabs:
             access.tabs.remove(tab)
 
-        tab.reset_tab()
+        tab.reset()
         access._reader.notebook.forget(tab.frame)
 
 
