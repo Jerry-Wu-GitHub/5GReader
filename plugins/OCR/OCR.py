@@ -408,7 +408,7 @@ Other plugins:
                 text,
                 fontsize = fontsize,
                 fontname = fontname,
-                # render_mode = 3 # 设为3表示不渲染文本（隐藏）
+                render_mode = 3 # 设为3表示不渲染文本（隐藏）
             )
 
 
@@ -490,11 +490,11 @@ Other plugins:
             accelerator = "Ctrl+Shift+O"
         )
 
-        self.context.add_menu_command(
-            path = ["工具", "OCR"],
-            label = "重新识别当前页",
-            command = self.reocr_current_page
-        )
+        # self.context.add_menu_command(
+        #     path = ["工具", "OCR"],
+        #     label = "重新识别当前页",
+        #     command = self.reocr_current_page
+        # )
 
         # 启动后台OCR任务
         self.context.add_periodically_execute_function(self.start_ocr_thread)

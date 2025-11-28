@@ -7,4 +7,6 @@
 /config/data.json
 
 **/*.zip
-temp*
+/temp/
+/venv/
+/release/
