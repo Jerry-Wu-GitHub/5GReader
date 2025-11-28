@@ -10,6 +10,44 @@ class ViewPlugin(Plugin):
     """
     name = "ViewPlugin"
 
+    description = """
+# ViewPlugin
+
+- name: ViewPlugin
+- author: Little Liu
+- hotkeys: None
+- menu entrance: `视图 → 单页`, `视图 → 双页`, `视图 → 书籍`
+
+## Function
+
+负责 PDF 页面的布局计算、渲染和视图管理。
+提供核心的坐标转换服务，支持缩放、滚动和多种阅读模式（单页、双页、书籍）。
+
+- 动态计算页面在画布上的位置
+- 处理页面渲染（PDF -> Image -> Canvas）
+- 管理滚动条和视图区域
+- 提供画布坐标到 PDF 页面坐标的转换接口
+
+## Api
+
+向 Tab 类注入了以下关键属性和方法：
+- `Tab.canvas_width/height` - 画布总尺寸
+- `Tab.visible_page_positions` - 当前可见页面的位置信息
+- `Tab.canvas_to_page_loc(x, y)` - 画布坐标转页面坐标
+- `Tab.render()` - 渲染当前视图
+
+## Depend
+
+Python extension library:
+- fitz (PyMuPDF)
+- PIL (Pillow)
+
+Other plugins:
+- TabPlugin
+"""
+
+    hotkeys = []
+
     def __init__(self, context):
         super().__init__(context)
         self.context = context
@@ -27,7 +65,7 @@ class ViewPlugin(Plugin):
         new_mode_parts = ["continuous"]
         if layout_part:
             new_mode_parts.append(layout_part)
-        
+
         new_mode = " ".join(new_mode_parts)
 
         # 只有当模式实际改变时才更新
@@ -121,14 +159,14 @@ class ViewPlugin(Plugin):
                     x = margin + (inner_width - w) / 2
                     rects.append(fitz.Rect(x, y, x + w, y + h))
                     y += h + vgap
-            
+
             # 【关键修复】计算并应用屏幕居中偏移量
             try:
                 # 获取屏幕（视口）的宽度
                 viewport_width = tab.canvas.winfo_width()
                 # 计算内容的实际总宽度
                 content_width = inner_width + 2 * margin
-                
+
                 # 如果屏幕比内容宽，则计算需要向右推的距离
                 if viewport_width > content_width:
                     offset = (viewport_width - content_width) / 2
@@ -160,6 +198,41 @@ class ViewPlugin(Plugin):
         Tab.canvas_rect = property(lambda self: fitz.Rect(0, 0, float(self.canvas_width), float(self.canvas_height)))
         Tab.selectable_page_positions = property(lambda self: list(zip(list(self.doc), _compute_page_canvas_rects(self))))
         Tab.coord2real = lambda self, pos: (self.canvas.canvasx(pos[0]), self.canvas.canvasy(pos[1]))
+
+        def canvas_to_page_loc(self, canvas_x: float, canvas_y: float) -> Tuple[Optional[fitz.Page], Optional[fitz.Point]]:
+            """
+            将画布坐标转换为页面对象和页面内坐标。
+
+            Args:
+                canvas_x: 画布 X 坐标（已考虑滚动条，即 canvasx）
+                canvas_y: 画布 Y 坐标（已考虑滚动条，即 canvasy）
+
+            Returns:
+                (page, point):
+                    page: 对应的 fitz.Page 对象，如果坐标不在任何页面上则为 None
+                    point: 页面内的坐标 (fitz.Point)，基于 PDF 原始尺寸（未缩放）
+            """
+            # 获取所有页面的布局矩形
+            page_rects = _compute_page_canvas_rects(self)
+
+            for i, rect in enumerate(page_rects):
+                # 检查点是否在矩形内
+                if rect.x0 <= canvas_x <= rect.x1 and rect.y0 <= canvas_y <= rect.y1:
+                    page = self.doc[i]
+
+                    # 计算相对于页面左上角的偏移
+                    offset_x = canvas_x - rect.x0
+                    offset_y = canvas_y - rect.y0
+
+                    # 还原缩放，得到 PDF 原始坐标
+                    pdf_x = offset_x / self.zoom
+                    pdf_y = offset_y / self.zoom
+
+                    return page, fitz.Point(pdf_x, pdf_y)
+
+            return None, None
+
+        Tab.canvas_to_page_loc = canvas_to_page_loc
 
         def visible_page_positions(self) -> List[Tuple[fitz.Page, fitz.Rect, fitz.Rect]]:
             page_rects = _compute_page_canvas_rects(self)

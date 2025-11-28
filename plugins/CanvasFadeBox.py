@@ -1,4 +1,5 @@
 import tkinter as tk
+from tkinter import messagebox
 from typing import Callable, Tuple, Union, override
 
 from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageTk
@@ -227,6 +228,10 @@ The message will be displayed at the bottom center of the canvas by default.
         在当前画布上打印一条信息。支持渐入、渐出等效果。
         """
         current_tab = self.context.get_current_tab()
+        if (current_tab is None) or (current_tab.canvas is None):
+            messagebox.showinfo("提示", text)
+            return
+
         canvas = current_tab.canvas
 
         x_view_start, x_view_end = canvas.xview()

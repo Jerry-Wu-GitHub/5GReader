@@ -332,7 +332,7 @@ Other plugins:
                 text,
                 fontsize = left,
                 fontname = "china-ss",
-                # render_mode = 3 # 设为3表示不渲染文本（隐藏）
+                render_mode = 3 # 设为3表示不渲染文本（隐藏）
             )
 
 

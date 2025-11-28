@@ -15,6 +15,7 @@ try:
 except ImportError:
     messagebox.showerror("错误", "缺少 openai 库，请安装: pip install openai")
 
+from glueous import ReaderAccess
 from glueous_plugin import Plugin
 
 
@@ -31,7 +32,7 @@ def set_windows_env_variable(key, value, scope='user'):
             cmd.insert(1, '/M')  # 系统级变量需要 /M 参数
 
         subprocess.run(cmd, check=True, capture_output=True)
-        print(f"✅ 成功设置环境变量: {key}={value} (scope: {scope})")
+        print(f"✅ 成功设置环境变量: {key} (scope: {scope})")
         return True
     except subprocess.CalledProcessError as e:
         print(f"❌ 设置失败: {e.stderr.decode()}")
@@ -76,7 +77,7 @@ class AIConfigDialog(tk.Toplevel):
     HELP_WEBSITE = "https://github.com/Jerry-Wu-GitHub/GlueousReader/blob/main/docs/AIConfigure.md"
 
 
-    def __init__(self, parent: tk.Tk, title: str = "AI Config", **kwargs: Dict[str, Any]):
+    def __init__(self, context: ReaderAccess, parent: tk.Tk, title: str = "AI Config", **kwargs: Dict[str, Any]):
         """
         Params:
 
@@ -86,6 +87,7 @@ class AIConfigDialog(tk.Toplevel):
         """
 
         super().__init__(parent)
+        self.context = context
         self.parent = parent
         self.title(title)
         self.geometry("450x480")
@@ -321,7 +323,7 @@ class AIConfigDialog(tk.Toplevel):
 
 
 
-def ask_AI_configuration(parent: Optional[tk.Tk] = None, **kwargs) -> Optional[AIConfiguration]:
+def ask_AI_configuration(context: ReaderAccess, parent: Optional[tk.Tk] = None, **kwargs) -> Optional[AIConfiguration]:
     """
     弹出大模型配置对话框并返回配置
     
@@ -335,7 +337,7 @@ def ask_AI_configuration(parent: Optional[tk.Tk] = None, **kwargs) -> Optional[A
         parent = tk.Tk()
         parent.withdraw()  # 隐藏主窗口
 
-    dialog = AIConfigDialog(parent, **kwargs)
+    dialog = AIConfigDialog(context, parent, **kwargs)
     return dialog.config_result
 
 
@@ -446,6 +448,7 @@ The `api_key` field is saved in the environment variable.
 
             # 创建配置对话框
             new_configuration: AIConfiguration = ask_AI_configuration(
+                context = self.context,
                 parent = self.context._reader.root,
                 **current_configuration
             )
@@ -453,7 +456,7 @@ The `api_key` field is saved in the environment variable.
             if new_configuration:
                 # 保存配置
                 self._save_configuration(new_configuration.to_dict())
-                messagebox.showinfo("成功", "AI配置已保存")
+                self.context.print("AI配置已保存")
 
         except Exception as e:
             messagebox.showerror("错误", f"配置失败: {str(e)}")
