@@ -1,6 +1,6 @@
 # MindMap
 
-这篇文档介绍如何配置环境，以支持思维导图的绘制。
+这篇文档介绍如何配置环境，以支持思维导图的绘制，以及如何使用思维导图插件。
 
 ## Configure
 
@@ -37,6 +37,24 @@
 
     在 GlueousReader 的顶部菜单栏中点击 `工具 → AI配置` 进行配置。
 
-## Entrance
+## Usage
 
-顶部菜单：`工具 → AI思维导图`
+完成配置后，您可以从顶部菜单：`工具 → AI思维导图` 打开思维导图插件。
+
+![entrance](./MindMap.assets/entrance.png)
+
+1. 设置思维导图的最大深度和页面范围。
+
+    ![set](./MindMap.assets/set.png)
+
+2. 如果整篇文档很长的话，需要等待一段时间进行文本压缩。
+
+    ![compress_text](./MindMap.assets/compress_text.png)
+
+3. 生成思维导图结构，您可以通过直接修改生成的 Markdown 文本来影响思维导图的生成。
+
+    ![generate_structure](./MindMap.assets/generate_structure.png)
+
+4. 生成思维导图。这会使用您的默认浏览器展示思维导图。
+
+    ![display](./MindMap.assets/display.png)

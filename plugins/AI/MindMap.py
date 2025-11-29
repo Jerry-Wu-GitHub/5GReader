@@ -470,7 +470,7 @@ class MindMapDialog():
         # 链接标签（蓝色、下划线）
         self.help_link = tk.Label(
             main_frame,
-            text   = "How to configure?",
+            text   = "How to use?",
             fg     = "blue",  # 文字颜色：蓝色
             cursor = "hand2",  # 鼠标悬停时显示“手”形指针
             font   = ("SimHei", 10)
