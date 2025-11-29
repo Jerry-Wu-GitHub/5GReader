@@ -104,15 +104,15 @@ graph LR
 
 **视图界面**：
 
-- [ ] [View.md](View.md) 
-- [ ] [Select&Drag.md](Select&Drag.md) 
+- [x] [View.md](View.md) 
+- [x] [Select&Drag.md](Select&Drag.md) 
 
 **OCR**：
 
-- [ ] [OCR.md](OCR.md) 
+- [x] [OCR.md](OCR.md) 
 
 **AI**：
 
 - [x] [AIConfigure.md](AIConfigure.md) 
-- [ ] [Summary.md](Summary.md) 
-- [ ] [MindMap.md](MindMap.md) 
+- [x] [Summary.md](Summary.md) 
+- [x] [MindMap.md](MindMap.md) 
